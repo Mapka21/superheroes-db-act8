@@ -1,18 +1,32 @@
 const express = require("express");
 const mysql = require("mysql2");
+const multer = require("multer");
+const path = require("path");
 const app = express();
-const port = 3000;
+const port = 3001;
 
-// Configuración
+// Configuración de Multer para subir imágenes
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "public/uploads/");
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + "-" + file.originalname);
+  },
+});
+const upload = multer({ storage: storage });
+
+// Configuración de Express
 app.set("view engine", "ejs");
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static("public"));
 
 // Conexión a MySQL
 const db = mysql.createConnection({
   host: "localhost",
   user: "root",
   password: "Mezc.2868",
-  database: "superheroes_db"
+  database: "superheroes_db",
 });
 
 db.connect((err) => {
@@ -20,13 +34,16 @@ db.connect((err) => {
   console.log("Conectado a MySQL");
 });
 
-// ======= RUTAS ======= //
-// Listar todos los superhéroes
+// ================= RUTAS ================= //
+// Listar superhéroes activos
 app.get("/", (req, res) => {
-  db.query("SELECT * FROM superheroes", (err, results) => {
-    if (err) throw err;
-    res.render("index", { superheroes: results });
-  });
+  db.query(
+    "SELECT * FROM superheroes WHERE deleted_at IS NULL",
+    (err, results) => {
+      if (err) throw err;
+      res.render("index", { superheroes: results });
+    }
+  );
 });
 
 // Mostrar formulario de creación
@@ -34,9 +51,11 @@ app.get("/create", (req, res) => {
   res.render("create");
 });
 
-// Procesar formulario de creación
-app.post("/create", (req, res) => {
-  const { nombre_real, nombre_heroe, foto_url, informacion_adicional } = req.body;
+// Procesar creación (con subida de imagen)
+app.post("/create", upload.single("foto"), (req, res) => {
+  const { nombre_real, nombre_heroe, informacion_adicional } = req.body;
+  const foto_url = req.file ? "/uploads/" + req.file.filename : null;
+
   db.query(
     "INSERT INTO superheroes (nombre_real, nombre_heroe, foto_url, informacion_adicional) VALUES (?, ?, ?, ?)",
     [nombre_real, nombre_heroe, foto_url, informacion_adicional],
@@ -47,31 +66,12 @@ app.post("/create", (req, res) => {
   );
 });
 
-// Mostrar detalles de un superhéroe
-app.get("/show/:id", (req, res) => {
+// Borrado lógico
+app.post("/delete/:id", (req, res) => {
   const id = req.params.id;
-  db.query("SELECT * FROM superheroes WHERE id = ?", [id], (err, results) => {
-    if (err) throw err;
-    res.render("show", { superheroe: results[0] });
-  });
-});
-
-// Mostrar formulario de edición
-app.get("/edit/:id", (req, res) => {
-  const id = req.params.id;
-  db.query("SELECT * FROM superheroes WHERE id = ?", [id], (err, results) => {
-    if (err) throw err;
-    res.render("edit", { superheroe: results[0] });
-  });
-});
-
-// Procesar formulario de edición
-app.post("/edit/:id", (req, res) => {
-  const id = req.params.id;
-  const { nombre_real, nombre_heroe, foto_url, informacion_adicional } = req.body;
   db.query(
-    "UPDATE superheroes SET nombre_real = ?, nombre_heroe = ?, foto_url = ?, informacion_adicional = ? WHERE id = ?",
-    [nombre_real, nombre_heroe, foto_url, informacion_adicional, id],
+    "UPDATE superheroes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+    [id],
     (err) => {
       if (err) throw err;
       res.redirect("/");
@@ -79,13 +79,28 @@ app.post("/edit/:id", (req, res) => {
   );
 });
 
-// Eliminar superhéroe
-app.post("/delete/:id", (req, res) => {
+// Mostrar eliminados
+app.get("/deleted", (req, res) => {
+  db.query(
+    "SELECT * FROM superheroes WHERE deleted_at IS NOT NULL",
+    (err, results) => {
+      if (err) throw err;
+      res.render("deleted", { superheroes: results });
+    }
+  );
+});
+
+// Restaurar registro
+app.post("/restore/:id", (req, res) => {
   const id = req.params.id;
-  db.query("DELETE FROM superheroes WHERE id = ?", [id], (err) => {
-    if (err) throw err;
-    res.redirect("/");
-  });
+  db.query(
+    "UPDATE superheroes SET deleted_at = NULL WHERE id = ?",
+    [id],
+    (err) => {
+      if (err) throw err;
+      res.redirect("/deleted");
+    }
+  );
 });
 
 // Iniciar servidor
